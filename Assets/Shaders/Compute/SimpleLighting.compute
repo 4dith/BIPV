@@ -7,18 +7,11 @@ struct Ray
     float3 direction;
 };
 
-struct Material
-{
-    float3 albedo;
-    float metallic;
-    float smoothness;
-};
-
 struct HitRecord
 {
     float3 pt;
     float3 normal;
-    uint materialIndex;
+    uint colorIndex;
     float t;
     bool frontFace;
 };
@@ -27,14 +20,23 @@ struct Sphere
 {
     float3 center;
     float radius;
-    uint materialIndex;
+    uint colorIndex;
+};
+
+struct Triangle
+{
+    float3 v0;
+    float3 v1;
+    float3 v2;
+    uint colorIndex;
 };
 
 // Create a RenderTexture with enableRandomWrite flag and set it
 // with cs.SetTexture
 RWTexture2D<float4> Result;
 StructuredBuffer<Sphere> Spheres;
-StructuredBuffer<Material> Materials;
+StructuredBuffer<Triangle> Triangles;
+StructuredBuffer<float3> Colors;
 
 uint NSamples;
 uint MaxDepth;
@@ -126,9 +128,44 @@ bool HitSphere(Sphere sphere, Ray r, float tMin, float tMax, inout HitRecord rec
     }
     
     rec.t = root;
-    rec.materialIndex = sphere.materialIndex;
+    rec.colorIndex = sphere.colorIndex;
     rec.pt = r.origin + root * r.direction;
     SetFaceNormal(rec, r, (rec.pt - sphere.center) / sphere.radius);
+    return true;
+}
+
+bool HitTriangle(Triangle tri, Ray r, float tMin, float tMax, inout HitRecord rec)
+{
+    // Edges
+    float3 e1 = tri.v1 - tri.v0;
+    float3 e2 = tri.v2 - tri.v0;
+    
+    // Checking if parallel
+    float3 p = cross(r.direction, e2);
+    float det = dot(e1, p);
+    if (det < 1e-8f)
+        return false;
+    
+    // Check if intersection is outside triangle
+    float invdet = 1.0f / det;
+    float3 T = r.origin - tri.v0;
+    float u = dot(T, p) * invdet;
+    if (u < 0.0f || u > 1.0f)
+        return false;
+    
+    float3 q = cross(T, e1);
+    float v = dot(r.direction, q) * invdet;
+    if (v < 0.0f || u + v > 1.0f)
+        return false;
+    
+    float t = dot(e2, q) * invdet;
+    if (t <= tMin || t >= tMax)
+        return false;
+    
+    rec.t = t;
+    rec.colorIndex = tri.colorIndex;
+    rec.pt = r.origin + t * r.direction;
+    SetFaceNormal(rec, r, normalize(cross(e1, e2)));
     return true;
 }
 
@@ -141,8 +178,9 @@ float3 RayColor(Ray ray, uint seed)
     rec.t = 0.0f;
     
     bool hitAnything = true;
-    uint bufferLength, _;
-    Spheres.GetDimensions(bufferLength, _);
+    uint nSpheres, nTris, _;
+    Spheres.GetDimensions(nSpheres, _);
+    Triangles.GetDimensions(nTris, _);
     
     float3 attenuation = float3(1.0f, 1.0f, 1.0f);
     
@@ -150,10 +188,20 @@ float3 RayColor(Ray ray, uint seed)
     {
         hitAnything = false;
         float closestSoFar = 1000.0f; // Far clipping plane
+        uint i;
         
-        for (uint i = 0; i < bufferLength; i++)
+        for (i = 0; i < nSpheres; i++)
         {
             if (HitSphere(Spheres[i], ray, 0.001f, closestSoFar, rec))
+            {
+                hitAnything = true;
+                closestSoFar = rec.t;
+            }
+        }
+        
+        for (i = 0; i < nTris; i++)
+        {
+            if (HitTriangle(Triangles[i], ray, 0.001f, closestSoFar, rec))
             {
                 hitAnything = true;
                 closestSoFar = rec.t;
@@ -164,13 +212,9 @@ float3 RayColor(Ray ray, uint seed)
         {
             seed = Hash(seed);
             ray.origin = rec.pt;
+            ray.direction = rec.normal + RandomUnitVector(seed);
             
-            // Todo: Catch degenerate scatter direction (zero vector)
-            Material mat = Materials[rec.materialIndex];
-            
-            ray.direction = lerp(Reflect(ray.direction, rec.normal), rec.normal + RandomUnitVector(seed), mat.smoothness);
-            
-            attenuation *= lerp(mat.albedo, float3(1.0f, 1.0f, 1.0f), mat.metallic);
+            attenuation *= Colors[rec.colorIndex];
         }
         else
         {

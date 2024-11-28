@@ -5,24 +5,23 @@ using UnityEngine;
 
 public class ComputeLighting : MonoBehaviour
 {
-    [System.Serializable]
     struct Sphere
     {
         public Vector3 position;
         public float radius;
-        public uint materialIndex;
+        public uint colorIndex;
     }
 
-    [System.Serializable]
-    struct MatStruct
+    struct Triangle
     {
-        public Vector3 color;
-        public float metallic;
-        public float smoothness;
+        public Vector3 v0;
+        public Vector3 v1;
+        public Vector3 v2;
+        public uint colorIndex;
     }
 
     public ComputeShader computeShader;
-    public RenderTexture renderTexture;
+    RenderTexture renderTexture;
 
     public Mesh defaultSphereMesh;
 
@@ -32,58 +31,89 @@ public class ComputeLighting : MonoBehaviour
     public int maxDepth;
 
     public string materialsPath;
-    Dictionary<string, uint> matIdDict = new Dictionary<string, uint>();
+    Dictionary<string, uint> colorIdDict = new Dictionary<string, uint>();
 
     List<Sphere> spheres = new();
-    List<MatStruct> matStructs = new();
+    List<Vector3> colors = new();
+    List<Triangle> triangles = new();
 
     Camera _camera;
-    ComputeBuffer sphereBuffer, materialBuffer;
+    ComputeBuffer sphereBuffer, colorBuffer, triangleBuffer;
+
+    [HideInInspector]
+    public bool meshGenerated;
 
     private void Awake()
     {
         _camera = GetComponent<Camera>();
+        meshGenerated = false;
 
         // Load all materials from the specified folder in the Resources directory
         Material[] materials = Resources.LoadAll<Material>(materialsPath);
 
-        uint matIndex = 0;
+        uint colorIndex = 0;
         foreach (Material mat in materials)
         {
             Debug.Log($"Loaded Material: {mat.name}", mat);
-            matIdDict[mat.name] = matIndex;
-            matIndex++;
+            colorIdDict[mat.name] = colorIndex;
+            colorIndex++;
             
-            MatStruct matStruct = new MatStruct();
-            matStruct.color = new Vector3(mat.color.r, mat.color.g, mat.color.b);
-            matStruct.metallic = mat.GetFloat("_Metallic");
-            matStruct.smoothness = mat.GetFloat("_Smoothness");
-            matStructs.Add(matStruct);
-        }
-
-        //Iterate through all GameObjects in the scene
-        GameObject[] allObjects = FindObjectsOfType<GameObject>();
-        foreach (GameObject obj in allObjects)
-        {
-            MeshFilter meshFilter = obj.GetComponent<MeshFilter>();
-            if (meshFilter != null && meshFilter.sharedMesh == defaultSphereMesh)
-            {
-                Debug.Log($"Default sphere found: {obj.name} {obj.transform.position} {obj.transform.localScale}");
-                Sphere sphere = new()
-                {
-                    position = obj.transform.position,
-                    radius = obj.transform.localScale.x / 2.0f,
-                    materialIndex = matIdDict[obj.GetComponent<MeshRenderer>().material.name.Replace(" (Instance)", "")]
-                };
-                spheres.Add(sphere);
-            }
+            Vector3 color = new Vector3(mat.color.r, mat.color.g, mat.color.b);
+            colors.Add(color);
         }
     }
 
     private void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
+        if (!meshGenerated)
+        {
+            Graphics.Blit(source, destination);
+            return;
+        }
+        
         if (renderTexture == null)
         {
+            //Iterate through all GameObjects in the scene
+            GameObject[] allObjects = FindObjectsOfType<GameObject>();
+            foreach (GameObject obj in allObjects)
+            {
+                MeshFilter meshFilter = obj.GetComponent<MeshFilter>();
+                if (meshFilter != null)
+                {
+                    if (meshFilter.sharedMesh == defaultSphereMesh)
+                    {
+                        Sphere sphere = new()
+                        {
+                            position = obj.transform.position,
+                            radius = obj.transform.localScale.x / 2.0f,
+                            colorIndex = colorIdDict[obj.GetComponent<MeshRenderer>().material.name.Replace(" (Instance)", "")]
+                        };
+                        spheres.Add(sphere);
+                    } else
+                    {
+                        int[] tris = meshFilter.mesh.triangles;
+                        Vector3[] verts = meshFilter.mesh.vertices;
+                        Transform objTransform = obj.transform;
+                        
+                        for (int i = 0; i < meshFilter.mesh.triangles.Length; i += 3)
+                        {
+                            Vector3 v0 = objTransform.TransformPoint(verts[tris[i]]);
+                            Vector3 v1 = objTransform.TransformPoint(verts[tris[i + 1]]);
+                            Vector3 v2 = objTransform.TransformPoint(verts[tris[i + 2]]);
+
+                            Triangle triangle = new()
+                            {
+                                v0 = v0, v1 = v1, v2 = v2,
+                                colorIndex = colorIdDict[obj.GetComponent<MeshRenderer>().material.name.Replace(" (Instance)", "")]
+                            };
+                            triangles.Add(triangle);
+                        }
+                    }
+                }
+            }
+
+            Debug.Log(triangles.ToArray().Length);
+
             renderTexture = new RenderTexture(screenWidth, screenHeight, 24);
             renderTexture.enableRandomWrite = true;
             renderTexture.Create();
@@ -97,9 +127,13 @@ public class ComputeLighting : MonoBehaviour
             sphereBuffer.SetData(spheres.ToArray());
             computeShader.SetBuffer(0, "Spheres", sphereBuffer);
 
-            materialBuffer = new ComputeBuffer(matStructs.ToArray().Length, sizeof(float) * 5);
-            materialBuffer.SetData(matStructs.ToArray());
-            computeShader.SetBuffer(0, "Materials", materialBuffer);
+            colorBuffer = new ComputeBuffer(colors.ToArray().Length, sizeof(float) * 3);
+            colorBuffer.SetData(colors.ToArray());
+            computeShader.SetBuffer(0, "Colors", colorBuffer);
+
+            triangleBuffer = new ComputeBuffer(triangles.ToArray().Length, sizeof(float) * 9 + sizeof(uint));
+            triangleBuffer.SetData(triangles.ToArray());
+            computeShader.SetBuffer(0, "Triangles", triangleBuffer);
         }
         
         computeShader.SetMatrix("CameraToWorld", _camera.cameraToWorldMatrix);
@@ -115,9 +149,14 @@ public class ComputeLighting : MonoBehaviour
             sphereBuffer.Release();
         }
 
-        if (materialBuffer != null)
+        if (colorBuffer != null)
         {
-            materialBuffer.Release();
+            colorBuffer.Release();
+        }
+
+        if (triangleBuffer != null)
+        {
+            triangleBuffer.Release();
         }
     }
 }

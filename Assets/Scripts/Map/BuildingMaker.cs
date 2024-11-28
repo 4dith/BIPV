@@ -71,6 +71,8 @@ class BuildingMaker : MonoBehaviour
 
             yield return null;
         }
+
+        FindObjectOfType<ComputeLighting>().meshGenerated = true;
     }
 
     Vector3 GetCentre(OsmWay way)
