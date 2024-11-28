@@ -16,13 +16,6 @@ struct HitRecord
     bool frontFace;
 };
 
-struct Sphere
-{
-    float3 center;
-    float radius;
-    uint colorIndex;
-};
-
 struct Triangle
 {
     float3 v0;
@@ -34,7 +27,6 @@ struct Triangle
 // Create a RenderTexture with enableRandomWrite flag and set it
 // with cs.SetTexture
 RWTexture2D<float4> Result;
-StructuredBuffer<Sphere> Spheres;
 StructuredBuffer<Triangle> Triangles;
 StructuredBuffer<float3> Colors;
 
@@ -102,38 +94,6 @@ void SetFaceNormal(inout HitRecord rec, Ray r, float3 outwardNormal)
     rec.normal = rec.frontFace ? outwardNormal : -outwardNormal;
 }
 
-float3 Reflect(float3 v, float3 n)
-{
-    return v - 2 * dot(v, n) * n;
-}
-
-bool HitSphere(Sphere sphere, Ray r, float tMin, float tMax, inout HitRecord rec)
-{
-    float3 oc = sphere.center - r.origin;
-    float a = dot(r.direction, r.direction);
-    float h = dot(r.direction, oc);
-    float c = dot(oc, oc) - sphere.radius * sphere.radius;
-    float discriminant = h * h - a * c;
-    
-    if (discriminant < 0.0f)
-        return false;
-    
-    float sqrtd = sqrt(discriminant);
-    float root = (h - sqrtd) / a;
-    if (root <= tMin || tMax <= root)
-    {
-        root = (h + sqrtd) / a;
-        if (root <= tMin || tMax <= root)
-            return false;
-    }
-    
-    rec.t = root;
-    rec.colorIndex = sphere.colorIndex;
-    rec.pt = r.origin + root * r.direction;
-    SetFaceNormal(rec, r, (rec.pt - sphere.center) / sphere.radius);
-    return true;
-}
-
 bool HitTriangle(Triangle tri, Ray r, float tMin, float tMax, inout HitRecord rec)
 {
     // Edges
@@ -178,8 +138,7 @@ float3 RayColor(Ray ray, uint seed)
     rec.t = 0.0f;
     
     bool hitAnything = true;
-    uint nSpheres, nTris, _;
-    Spheres.GetDimensions(nSpheres, _);
+    uint nTris, _;
     Triangles.GetDimensions(nTris, _);
     
     float3 attenuation = float3(1.0f, 1.0f, 1.0f);
@@ -187,19 +146,9 @@ float3 RayColor(Ray ray, uint seed)
     for (uint depth = 0; depth <= MaxDepth; depth++)
     {
         hitAnything = false;
-        float closestSoFar = 1000.0f; // Far clipping plane
-        uint i;
+        float closestSoFar = 5000.0f; // Far clipping plane
         
-        for (i = 0; i < nSpheres; i++)
-        {
-            if (HitSphere(Spheres[i], ray, 0.001f, closestSoFar, rec))
-            {
-                hitAnything = true;
-                closestSoFar = rec.t;
-            }
-        }
-        
-        for (i = 0; i < nTris; i++)
+        for (uint i = 0; i < nTris; i++)
         {
             if (HitTriangle(Triangles[i], ray, 0.001f, closestSoFar, rec))
             {
