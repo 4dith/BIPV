@@ -1,0 +1,203 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+struct Ray
+{
+    float3 origin;
+    float3 direction;
+};
+
+struct Material
+{
+    float3 albedo;
+    float metallic;
+    float smoothness;
+};
+
+struct HitRecord
+{
+    float3 pt;
+    float3 normal;
+    uint materialIndex;
+    float t;
+    bool frontFace;
+};
+
+struct Sphere
+{
+    float3 center;
+    float radius;
+    uint materialIndex;
+};
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<float4> Result;
+StructuredBuffer<Sphere> Spheres;
+StructuredBuffer<Material> Materials;
+
+uint NSamples;
+uint MaxDepth;
+float4x4 CameraToWorld;
+float4x4 CameraInverseProj;
+
+uint Hash(uint x)
+{
+    x ^= x >> 16;
+    x *= 0x85ebca6b;
+    x ^= x >> 13;
+    x *= 0xc2b2ae35;
+    x ^= x >> 16;
+    return x;
+}
+
+float Random(uint seed)
+{
+    uint hashed = Hash(seed);
+    return (float) (hashed & 0x00FFFFFFu) / 16777216.0f; // Normalize to [0, 1]
+}
+
+float2 Random2(uint seed)
+{
+    // Generate the first random number
+    float random1 = Random(seed);
+
+    // Modify the seed to generate the second random number
+    float random2 = Random(seed + 1);
+
+    return float2(random1, random2);
+}
+
+float3 RandomUnitVector(uint seed)
+{
+    float x = Random(seed) * 2.0f - 1.0f;
+    float y = Random(seed + 1) * 2.0f - 1.0f;
+    float z = Random(seed + 2) * 2.0f - 1.0f;
+
+    return normalize(float3(x, y, z));
+}
+
+Ray CreateRay(float3 origin, float3 direction)
+{
+    Ray ray;
+    ray.origin = origin;
+    ray.direction = direction;
+    return ray;
+}
+
+Ray CreateCameraRay(float2 uv)
+{
+    float3 origin = mul(CameraToWorld, float4(0.0f, 0.0f, 0.0f, 1.0f)).xyz;
+    float3 direction = mul(CameraInverseProj, float4(uv, 0.0f, 1.0f)).xyz;
+    direction = mul(CameraToWorld, float4(direction, 0.0f)).xyz;
+    // direction = normalize(direction);
+    return CreateRay(origin, direction);
+}
+
+void SetFaceNormal(inout HitRecord rec, Ray r, float3 outwardNormal)
+{
+    rec.frontFace = dot(r.direction, outwardNormal) < 0;
+    rec.normal = rec.frontFace ? outwardNormal : -outwardNormal;
+}
+
+float3 Reflect(float3 v, float3 n)
+{
+    return v - 2 * dot(v, n) * n;
+}
+
+bool HitSphere(Sphere sphere, Ray r, float tMin, float tMax, inout HitRecord rec)
+{
+    float3 oc = sphere.center - r.origin;
+    float a = dot(r.direction, r.direction);
+    float h = dot(r.direction, oc);
+    float c = dot(oc, oc) - sphere.radius * sphere.radius;
+    float discriminant = h * h - a * c;
+    
+    if (discriminant < 0.0f)
+        return false;
+    
+    float sqrtd = sqrt(discriminant);
+    float root = (h - sqrtd) / a;
+    if (root <= tMin || tMax <= root)
+    {
+        root = (h + sqrtd) / a;
+        if (root <= tMin || tMax <= root)
+            return false;
+    }
+    
+    rec.t = root;
+    rec.materialIndex = sphere.materialIndex;
+    rec.pt = r.origin + root * r.direction;
+    SetFaceNormal(rec, r, (rec.pt - sphere.center) / sphere.radius);
+    return true;
+}
+
+float3 RayColor(Ray ray, uint seed)
+{    
+    HitRecord rec;
+    rec.frontFace = false;
+    rec.normal = float3(0.0f, 0.0f, 0.0f);
+    rec.pt = float3(0.0f, 0.0f, 0.0f);
+    rec.t = 0.0f;
+    
+    bool hitAnything = true;
+    uint bufferLength, _;
+    Spheres.GetDimensions(bufferLength, _);
+    
+    float3 attenuation = float3(1.0f, 1.0f, 1.0f);
+    
+    for (uint depth = 0; depth <= MaxDepth; depth++)
+    {
+        hitAnything = false;
+        float closestSoFar = 1000.0f; // Far clipping plane
+        
+        for (uint i = 0; i < bufferLength; i++)
+        {
+            if (HitSphere(Spheres[i], ray, 0.001f, closestSoFar, rec))
+            {
+                hitAnything = true;
+                closestSoFar = rec.t;
+            }
+        }
+        
+        if (hitAnything)
+        {
+            seed = Hash(seed);
+            ray.origin = rec.pt;
+            
+            // Todo: Catch degenerate scatter direction (zero vector)
+            Material mat = Materials[rec.materialIndex];
+            
+            ray.direction = lerp(Reflect(ray.direction, rec.normal), rec.normal + RandomUnitVector(seed), mat.smoothness);
+            
+            attenuation *= lerp(mat.albedo, float3(1.0f, 1.0f, 1.0f), mat.metallic);
+        }
+        else
+        {
+            float3 bgCol = lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), 0.5f * (normalize(ray.direction).y + 1.0f));
+            return attenuation * bgCol;
+        }
+    }
+    
+    return float3(0.0f, 0.0f, 0.0f);
+}
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    // TODO: insert actual code here!
+    uint sWidth, sHeight;
+    Result.GetDimensions(sWidth, sHeight);
+    
+    float3 rayColor = float3(0.0f, 0.0f, 0.0f);
+    
+    for (uint i = 0; i < NSamples; i++)
+    {
+        uint seed = id.x + id.y * sWidth + i * 2003;
+        float2 uv = (id.xy + Random2(seed)) / float2(sWidth, sHeight) * 2.0f - 1.0f;
+        Ray ray = CreateCameraRay(uv);
+        rayColor += RayColor(ray, seed);
+    }
+    
+    Result[id.xy] = float4(rayColor / NSamples, 1.0f);
+}

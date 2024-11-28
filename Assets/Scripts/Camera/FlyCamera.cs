@@ -19,6 +19,12 @@ public class FlyCamera : MonoBehaviour {
     float camSens = 0.25f; //How sensitive it with mouse
     private Vector3 lastMouse = new Vector3(255, 255, 255); //kind of in the middle of the screen, rather than at the top (play)
     private float totalRun= 1.0f;
+
+    void Start()
+    {
+        Cursor.visible = false;   
+        Camera.main.depthTextureMode = DepthTextureMode.Depth;
+    }
      
     void Update () {
         lastMouse = Input.mousePosition - lastMouse ;
