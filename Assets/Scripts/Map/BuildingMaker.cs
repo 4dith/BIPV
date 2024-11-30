@@ -43,26 +43,23 @@ class BuildingMaker : MonoBehaviour
             if (signedArea < 0f) verts.Reverse();
             List<int> tris = EarClippingTriangulation.Triangulate(verts);
 
-            int vertIndex = verts.Count;
+            // Adding bottom vertices
+            int nTopVertices = verts.Count;
+            for (int i = 0; i < nTopVertices; i++)
+            {
+                Vector3 bottomVert = verts[i] + Vector3.down * verts[i].y;
+                verts.Add(bottomVert);
+            }
+
             for (int i = 0; i < way.NodeIDs.Count - 1; i++)
             {
-                current = verts[i];
-                next = verts[(i + 1) % (way.NodeIDs.Count - 1)];
+                tris.Add(i);
+                tris.Add((i + 1) % (way.NodeIDs.Count - 1));
+                tris.Add(nTopVertices + i);
 
-                verts.Add(new(current.x, current.y, current.z));
-                verts.Add(new(next.x, next.y, next.z));
-                verts.Add(new(current.x, 0, current.z));
-                verts.Add(new(next.x, 0, next.z));
-
-                tris.Add(vertIndex);
-                tris.Add(vertIndex + 1);
-                tris.Add(vertIndex + 2);
-
-                tris.Add(vertIndex + 1);
-                tris.Add(vertIndex + 3);
-                tris.Add(vertIndex + 2);
-
-                vertIndex += 4;
+                tris.Add((i + 1) % (way.NodeIDs.Count - 1));
+                tris.Add(nTopVertices + (i + 1) % (way.NodeIDs.Count - 1));
+                tris.Add(nTopVertices + i);
             }
 
             mf.mesh.vertices = verts.ToArray();

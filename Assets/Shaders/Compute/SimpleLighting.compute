@@ -11,17 +11,15 @@ struct HitRecord
 {
     float3 pt;
     float3 normal;
-    uint colorIndex;
     float t;
     bool frontFace;
 };
 
 struct Triangle
 {
-    float3 v0;
-    float3 v1;
-    float3 v2;
-    uint colorIndex;
+    uint v0;
+    uint v1;
+    uint v2;
 };
 
 // Create a RenderTexture with enableRandomWrite flag and set it
@@ -29,6 +27,7 @@ struct Triangle
 RWTexture2D<float4> Result;
 StructuredBuffer<Triangle> Triangles;
 StructuredBuffer<float3> Colors;
+StructuredBuffer<float3> Vertices;
 
 uint NSamples;
 uint MaxDepth;
@@ -96,9 +95,13 @@ void SetFaceNormal(inout HitRecord rec, Ray r, float3 outwardNormal)
 
 bool HitTriangle(Triangle tri, Ray r, float tMin, float tMax, inout HitRecord rec)
 {
+    float3 v0 = Vertices[tri.v0];
+    float3 v1 = Vertices[tri.v1];
+    float3 v2 = Vertices[tri.v2];
+    
     // Edges
-    float3 e1 = tri.v1 - tri.v0;
-    float3 e2 = tri.v2 - tri.v0;
+    float3 e1 = v1 - v0;
+    float3 e2 = v2 - v0;
     
     // Checking if parallel
     float3 p = cross(r.direction, e2);
@@ -108,7 +111,7 @@ bool HitTriangle(Triangle tri, Ray r, float tMin, float tMax, inout HitRecord re
     
     // Check if intersection is outside triangle
     float invdet = 1.0f / det;
-    float3 T = r.origin - tri.v0;
+    float3 T = r.origin - v0;
     float u = dot(T, p) * invdet;
     if (u < 0.0f || u > 1.0f)
         return false;
@@ -123,7 +126,6 @@ bool HitTriangle(Triangle tri, Ray r, float tMin, float tMax, inout HitRecord re
         return false;
     
     rec.t = t;
-    rec.colorIndex = tri.colorIndex;
     rec.pt = r.origin + t * r.direction;
     SetFaceNormal(rec, r, normalize(cross(e1, e2)));
     return true;
@@ -140,9 +142,8 @@ float3 RayColor(Ray ray, uint seed)
     bool hitAnything = true;
     uint nTris, _;
     Triangles.GetDimensions(nTris, _);
-    
+        
     float3 attenuation = float3(1.0f, 1.0f, 1.0f);
-    
     for (uint depth = 0; depth <= MaxDepth; depth++)
     {
         hitAnything = false;
@@ -161,14 +162,12 @@ float3 RayColor(Ray ray, uint seed)
         {
             seed = Hash(seed);
             ray.origin = rec.pt;
-            ray.direction = rec.normal + RandomUnitVector(seed);
-            
-            attenuation *= Colors[rec.colorIndex];
+            ray.direction = rec.normal + RandomUnitVector(seed);      
+            attenuation *= float3(0.9f, 0.7f, 0.3f);
         }
         else
         {
-            float3 bgCol = lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), 0.5f * (normalize(ray.direction).y + 1.0f));
-            return attenuation * bgCol;
+            return attenuation * lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), 0.5f * (normalize(ray.direction).y + 1.0f));
         }
     }
     

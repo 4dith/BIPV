@@ -7,10 +7,9 @@ public class ComputeLighting : MonoBehaviour
 {
     struct Triangle
     {
-        public Vector3 v0;
-        public Vector3 v1;
-        public Vector3 v2;
-        public uint colorIndex;
+        public uint v0;
+        public uint v1;
+        public uint v2;
     }
 
     public ComputeShader computeShader;
@@ -21,14 +20,11 @@ public class ComputeLighting : MonoBehaviour
     public int nSamples;
     public int maxDepth;
 
-    public string materialsPath;
-    Dictionary<string, uint> colorIdDict = new Dictionary<string, uint>();
-
-    List<Vector3> colors = new();
     List<Triangle> triangles = new();
+    List<Vector3> vertices = new();
 
     Camera _camera;
-    ComputeBuffer colorBuffer, triangleBuffer;
+    ComputeBuffer triangleBuffer, vertexBuffer;
 
     [HideInInspector]
     public bool meshGenerated;
@@ -37,20 +33,6 @@ public class ComputeLighting : MonoBehaviour
     {
         _camera = GetComponent<Camera>();
         meshGenerated = false;
-
-        // Load all materials from the specified folder in the Resources directory
-        Material[] materials = Resources.LoadAll<Material>(materialsPath);
-
-        uint colorIndex = 0;
-        foreach (Material mat in materials)
-        {
-            Debug.Log($"Loaded Material: {mat.name}", mat);
-            colorIdDict[mat.name] = colorIndex;
-            colorIndex++;
-            
-            Vector3 color = new Vector3(mat.color.r, mat.color.g, mat.color.b);
-            colors.Add(color);
-        }
     }
 
     private void OnRenderImage(RenderTexture source, RenderTexture destination)
@@ -65,6 +47,8 @@ public class ComputeLighting : MonoBehaviour
         {
             //Iterate through all GameObjects in the scene
             GameObject[] allObjects = FindObjectsOfType<GameObject>();
+            int vertIndex = 0;
+
             foreach (GameObject obj in allObjects)
             {
                 MeshFilter meshFilter = obj.GetComponent<MeshFilter>();
@@ -73,24 +57,32 @@ public class ComputeLighting : MonoBehaviour
                     int[] tris = meshFilter.mesh.triangles;
                     Vector3[] verts = meshFilter.mesh.vertices;
                     Transform objTransform = obj.transform;
-                        
+
+                    for (int i = 0; i < verts.Length; i++)
+                    {
+                        vertices.Add(objTransform.TransformPoint(verts[i]));
+                    }
+
                     for (int i = 0; i < meshFilter.mesh.triangles.Length; i += 3)
                     {
-                        Vector3 v0 = objTransform.TransformPoint(verts[tris[i]]);
-                        Vector3 v1 = objTransform.TransformPoint(verts[tris[i + 1]]);
-                        Vector3 v2 = objTransform.TransformPoint(verts[tris[i + 2]]);
-
                         Triangle triangle = new()
                         {
-                            v0 = v0, v1 = v1, v2 = v2,
-                            colorIndex = colorIdDict[obj.GetComponent<MeshRenderer>().material.name.Replace(" (Instance)", "")]
+                            v0 = (uint) (vertIndex + tris[i]), 
+                            v1 = (uint) (vertIndex + tris[i + 1]), 
+                            v2 = (uint) (vertIndex + tris[i + 2]),
                         };
                         triangles.Add(triangle);
                     }
+
+                    vertIndex += verts.Length;
                 }
             }
 
-            Debug.Log(triangles.ToArray().Length);
+            Vector3[] vertArray = vertices.ToArray();
+            Triangle[] triArray = triangles.ToArray();
+
+            Debug.Log("Number of vertices = " + vertArray.Length);
+            Debug.Log("Number of triangles = " + triArray.Length);
 
             renderTexture = new RenderTexture(screenWidth, screenHeight, 24);
             renderTexture.enableRandomWrite = true;
@@ -101,13 +93,13 @@ public class ComputeLighting : MonoBehaviour
             computeShader.SetInt("NSamples", nSamples);
             computeShader.SetInt("MaxDepth", maxDepth);
 
-            colorBuffer = new ComputeBuffer(colors.ToArray().Length, sizeof(float) * 3);
-            colorBuffer.SetData(colors.ToArray());
-            computeShader.SetBuffer(0, "Colors", colorBuffer);
-
-            triangleBuffer = new ComputeBuffer(triangles.ToArray().Length, sizeof(float) * 9 + sizeof(uint));
-            triangleBuffer.SetData(triangles.ToArray());
+            triangleBuffer = new ComputeBuffer(triArray.Length, sizeof(uint) * 3);
+            triangleBuffer.SetData(triArray);
             computeShader.SetBuffer(0, "Triangles", triangleBuffer);
+
+            vertexBuffer = new ComputeBuffer(vertArray.Length, sizeof(float) * 3);
+            vertexBuffer.SetData(vertArray);
+            computeShader.SetBuffer(0, "Vertices", vertexBuffer);
         }
         
         computeShader.SetMatrix("CameraToWorld", _camera.cameraToWorldMatrix);
@@ -118,9 +110,9 @@ public class ComputeLighting : MonoBehaviour
     void OnDestroy()
     {
         // Release the buffer when done (important to avoid memory leaks)
-        if (colorBuffer != null)
+        if (vertexBuffer != null)
         {
-            colorBuffer.Release();
+            vertexBuffer.Release();
         }
 
         if (triangleBuffer != null)
