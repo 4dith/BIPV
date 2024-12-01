@@ -229,6 +229,7 @@ GameObject:
   - component: {fileID: 457351278}
   - component: {fileID: 457351277}
   - component: {fileID: 457351276}
+  - component: {fileID: 457351280}
   m_Layer: 0
   m_Name: Ground
   m_TagString: Untagged
@@ -323,6 +324,22 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &457351280
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 457351275}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a4dd1fbcd4059aa40a16321e828b0747, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  lightRay: {fileID: 0}
+  maxDepth: 1
+  transformedVertices: []
+  tris: 
 --- !u!1 &906499670
 GameObject:
   m_ObjectHideFlags: 0
@@ -513,6 +530,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a902c102c847d6d4bbe3490cbbab2ed2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  Bvh: {fileID: 0}
   computeShader: {fileID: 7200000, guid: e5772bef0d83013418e67070a60e3133, type: 3}
   screenWidth: 240
   screenHeight: 240

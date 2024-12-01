@@ -22,17 +22,27 @@ struct Triangle
     uint v2;
 };
 
+struct Bound
+{
+    float3 Min;
+    float3 Max;
+    uint endIndex;
+};
+
 // Create a RenderTexture with enableRandomWrite flag and set it
 // with cs.SetTexture
 RWTexture2D<float4> Result;
 StructuredBuffer<Triangle> Triangles;
 StructuredBuffer<float3> Colors;
 StructuredBuffer<float3> Vertices;
+StructuredBuffer<Bound> Bounds;
 
 uint NSamples;
 uint MaxDepth;
 float4x4 CameraToWorld;
 float4x4 CameraInverseProj;
+
+#define MAX_BVH_DEPTH 10
 
 uint Hash(uint x)
 {
@@ -131,6 +141,33 @@ bool HitTriangle(Triangle tri, Ray r, float tMin, float tMax, inout HitRecord re
     return true;
 }
 
+bool HitBound(Bound b, Ray r, float near, float far, out float t)
+{
+    // Prenormalize rays??
+    float3 invDir = 1 / normalize(r.direction);
+    
+    float t1x = (b.Min.x - r.origin.x) * invDir.x;
+    float t2x = (b.Max.x - r.origin.x) * invDir.x;
+    float tMinX = min(t1x, t2x);
+    float tMaxX = max(t1x, t2x);
+    
+    float t1y = (b.Min.y - r.origin.y) * invDir.y;
+    float t2y = (b.Max.y - r.origin.y) * invDir.y;
+    float tMinY = min(t1y, t2y);
+    float tMaxY = max(t1y, t2y);
+    
+    float t1z = (b.Min.z - r.origin.z) * invDir.z;
+    float t2z = (b.Max.z - r.origin.z) * invDir.z;
+    float tMinZ = min(t1z, t2z);
+    float tMaxZ = max(t1z, t2z);
+    
+    float tMin = max(max(tMinX, tMinY), tMinZ);
+    float tMax = min(min(tMaxX, tMaxY), tMaxZ);
+    
+    t = tMin > 0 ? tMin : tMax;
+    return near < tMin && far > tMax && tMax >= max(0.0f, tMin);
+}
+
 float3 RayColor(Ray ray, uint seed)
 {    
     HitRecord rec;
@@ -139,22 +176,66 @@ float3 RayColor(Ray ray, uint seed)
     rec.pt = float3(0.0f, 0.0f, 0.0f);
     rec.t = 0.0f;
     
+    float nearLimit = 0.001f;
+    float farLimit = 5000.0f;
+    
     bool hitAnything = true;
-    uint nTris, _;
+    uint nTris, nBounds, _;
     Triangles.GetDimensions(nTris, _);
+    Bounds.GetDimensions(nBounds, _);
         
     float3 attenuation = float3(1.0f, 1.0f, 1.0f);
+    
     for (uint depth = 0; depth <= MaxDepth; depth++)
     {
         hitAnything = false;
-        float closestSoFar = 5000.0f; // Far clipping plane
         
-        for (uint i = 0; i < nTris; i++)
+        uint BvhBacktrackArray[MAX_BVH_DEPTH];
+        BvhBacktrackArray[0] = 1;
+        int backTrackIndex = 0;
+        
+        while (!hitAnything && backTrackIndex != -1)
         {
-            if (HitTriangle(Triangles[i], ray, 0.001f, closestSoFar, rec))
+            uint currentBound = BvhBacktrackArray[backTrackIndex--];
+            
+            while (currentBound != 0 && currentBound < nBounds / 2)
             {
-                hitAnything = true;
-                closestSoFar = rec.t;
+                uint leftBound = 2 * currentBound;
+                uint rightBound = 2 * currentBound + 1;
+                
+                float leftT, rightT;
+                
+                bool leftHit = HitBound(Bounds[leftBound], ray, nearLimit, farLimit, leftT);
+                bool rightHit = HitBound(Bounds[rightBound], ray, nearLimit, farLimit, rightT);
+                
+                bool leftNear = leftT < rightT;
+                uint nearBound = leftNear ? leftBound : rightBound;
+                uint farBound = leftNear ? rightBound : leftBound;
+                bool nearHit = leftNear ? leftHit : rightHit;
+                bool farHit = leftNear ? rightHit : leftHit;
+                
+                currentBound = nearHit ? nearBound : (farHit ? farBound : 0);
+            
+                if (currentBound == nearBound && farHit && backTrackIndex < MAX_BVH_DEPTH - 1)
+                {
+                    BvhBacktrackArray[++backTrackIndex] = farBound;
+                }
+            }
+        
+            if (currentBound >= nBounds / 2)
+            {
+                float closestSoFar = farLimit;
+            
+                uint startIndex = (currentBound > nBounds / 2) ? Bounds[currentBound - 1].endIndex : 0;
+                uint endIndex = Bounds[currentBound].endIndex;
+                for (uint i = startIndex; i < endIndex; i++)
+                {
+                    if (HitTriangle(Triangles[i], ray, nearLimit, closestSoFar, rec))
+                    {
+                        hitAnything = true;
+                        closestSoFar = rec.t;
+                    }
+                }
             }
         }
         
@@ -163,10 +244,12 @@ float3 RayColor(Ray ray, uint seed)
             seed = Hash(seed);
             ray.origin = rec.pt;
             ray.direction = rec.normal + RandomUnitVector(seed);      
-            attenuation *= float3(0.9f, 0.7f, 0.3f);
+            attenuation *= float3(1.0f, 1.0f, 1.0f);
         }
         else
         {
+            if (depth == 0)
+                return float3(0.0f, 0.0f, 0.0f);
             return attenuation * lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), 0.5f * (normalize(ray.direction).y + 1.0f));
         }
     }
