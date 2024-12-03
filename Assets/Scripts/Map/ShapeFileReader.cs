@@ -1,8 +1,16 @@
 //This code ha been heavily influenced by ChatGPT. Thus, a more robust implementation of the code is being awaited
 
+using UnityEngine;
+using NetTopologySuite.Features;
+using NetTopologySuite.Geometries;
+using NetTopologySuite.IO;
+using NetTopologySuite.IO.ShapeFile.Extended;
+using System.Collections.Generic;
+
+
 public class ShapeFileReader : MonoBehaviour
 {
-    [Tooltip("Path to shapefile (.shp)")]
+    //[Tooltip("Path to shapefile (.shp)")]
     public string ShapeFilePath = "\"C:\\Users\\dassu\\Downloads\\LOD1_Building_with_height_info\\LOD1_Building_with_height_info.shp\"";
 
     private List<Vector3[]> lines;          //Stores lines for visualisation
@@ -22,17 +30,16 @@ public class ShapeFileReader : MonoBehaviour
     {
         Debug.Log($"Reading Shapefile from path: {ShapeFilePath}");
 
-        if (!System.IO.File.Exists(ShapeFilePath))
-        {
-            Debug.LogError($"FIle not found: {ShapeFilePath}");
-        }
+        try
 
 
-        using (ShapefileDataReader reader = new(ShapeFilePath, GeometryFactory.Default))
         {
-            while (reader.Read())
+            ShapeFileReader reader = new ShapeFileReader(ShapeFilePath);
+            var features = reader.ReadAll();
+
+            foreach (var feature in features)
             {
-                Geometry geometry = reader.Geometry; ;
+                var geometry = feature.Geometry;
 
                 //For Point or Polygon conversion
                 if (geometry is Point point)
@@ -50,6 +57,15 @@ public class ShapeFileReader : MonoBehaviour
                     lines.Add(ConvertToUnityCoordinates(lineString.Coordinates));
                 }
             }
+
+
+
+        }
+        
+        
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"Error reading Shapefile: {ex.Message}");
         }
     }
 
