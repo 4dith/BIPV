@@ -1,44 +1,70 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 
-[RequireComponent(typeof(MeshFilter))]
 public class BVH : MonoBehaviour
 {
     public BVHNode root;
-
-    public Transform lightRay;
-
     public int maxDepth = 1;
 
     [HideInInspector]
-    public Vector3[] transformedVertices;
+    public Vector3[] transformedVertArray;
 
     [HideInInspector]
-    public int[] tris;
+    public int[] triArray;
+
+    void CreateUnifiedMesh()
+    {
+        //Iterate through all GameObjects in the scene
+        GameObject[] allObjects = FindObjectsOfType<GameObject>();
+
+        List<Vector3> vertList = new();
+        List<int> triList = new();
+        int vertIndex = 0;
+
+        foreach (GameObject obj in allObjects)
+        {
+            MeshFilter meshFilter = obj.GetComponent<MeshFilter>();
+            if (meshFilter != null)
+            {
+                int[] tris = meshFilter.mesh.triangles;
+                Vector3[] verts = meshFilter.mesh.vertices;
+                Transform objTransform = obj.transform;
+
+                for (int i = 0; i < verts.Length; i++)
+                {
+                    vertList.Add(objTransform.TransformPoint(verts[i]));
+                }
+
+                for (int i = 0; i < tris.Length; i ++)
+                {
+                    triList.Add(vertIndex + tris[i]);
+                }
+
+                vertIndex += verts.Length;
+            }
+        }
+
+        transformedVertArray = vertList.ToArray();
+        triArray = triList.ToArray();
+    }
     
     public BVHNode CreateAndInit()
     {
         BVHNode node = new();
+        CreateUnifiedMesh();
 
-        Mesh mesh = GetComponent<MeshFilter>().sharedMesh;
-        transformedVertices = new Vector3[mesh.vertices.Length];
-        transform.TransformPoints(mesh.vertices, transformedVertices);
-        
-        tris = mesh.triangles;
-
-        for (int i = 0; i < mesh.triangles.Length; i+=3)
+        for (int i = 0; i < triArray.Length; i+=3)
         {
-            Vector3 vert1 = transformedVertices[tris[i]];
-            Vector3 vert2 = transformedVertices[tris[i + 1]];
-            Vector3 vert3 = transformedVertices[tris[i + 2]];
+            Vector3 vert1 = transformedVertArray[triArray[i]];
+            Vector3 vert2 = transformedVertArray[triArray[i + 1]];
+            Vector3 vert3 = transformedVertArray[triArray[i + 2]];
 
-            node.FitTriangle(vert1, vert2, vert3, tris[i], tris[i + 1], tris[i + 2]);
+            node.FitTriangle(vert1, vert2, vert3, triArray[i], triArray[i + 1], triArray[i + 2]);
         }
 
-        Split(transformedVertices, node, 1);
+        Split(transformedVertArray, node, 1);
         return node;
     }
 
@@ -74,7 +100,7 @@ public class BVH : MonoBehaviour
         Split(verts, node.ChildB, depth + 1);
     }
 
-    bool DrawBVH(BVHNode node)
+    bool DrawBVH(Transform lightRay, BVHNode node)
     {
         float t;
         bool result = RayIntersectsAABB(lightRay.position, lightRay.forward, node.Min, node.Max, out t);
@@ -83,8 +109,8 @@ public class BVH : MonoBehaviour
         {
             if (node.ChildA != null)
             {
-                result = DrawBVH(node.ChildA);
-                if (!result) result = DrawBVH(node.ChildB);
+                result = DrawBVH(lightRay, node.ChildA);
+                if (!result) result = DrawBVH(lightRay, node.ChildB);
                 Gizmos.color = result ? Color.yellow : Color.red;
             }
             else
@@ -95,11 +121,6 @@ public class BVH : MonoBehaviour
         
         Gizmos.DrawWireCube(node.Centre, node.Size);
         return result;
-    }
-
-    void OnDrawGizmos()
-    {
-        if (root != null) DrawBVH(root);
     }
 
     bool RayIntersectsAABB(Vector3 origin, Vector3 direction, Vector3 boxMin, Vector3 boxMax, out float t)

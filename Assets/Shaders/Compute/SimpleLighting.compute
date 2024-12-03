@@ -11,6 +11,7 @@ struct HitRecord
 {
     float3 pt;
     float3 normal;
+    uint colorIndex;
     float t;
     bool frontFace;
 };
@@ -20,6 +21,7 @@ struct Triangle
     uint v0;
     uint v1;
     uint v2;
+    uint colorIndex;
 };
 
 struct Bound
@@ -42,7 +44,7 @@ uint MaxDepth;
 float4x4 CameraToWorld;
 float4x4 CameraInverseProj;
 
-#define MAX_BVH_DEPTH 10
+#define MAX_BOUND_BUFFER 32
 
 uint Hash(uint x)
 {
@@ -137,6 +139,7 @@ bool HitTriangle(Triangle tri, Ray r, float tMin, float tMax, inout HitRecord re
     
     rec.t = t;
     rec.pt = r.origin + t * r.direction;
+    rec.colorIndex = tri.colorIndex;
     SetFaceNormal(rec, r, normalize(cross(e1, e2)));
     return true;
 }
@@ -183,6 +186,7 @@ float3 RayColor(Ray ray, uint seed)
     uint nTris, nBounds, _;
     Triangles.GetDimensions(nTris, _);
     Bounds.GetDimensions(nBounds, _);
+    uint leafThresh = nBounds / 2;
         
     float3 attenuation = float3(1.0f, 1.0f, 1.0f);
     
@@ -190,51 +194,91 @@ float3 RayColor(Ray ray, uint seed)
     {
         hitAnything = false;
         
-        uint BvhBacktrackArray[MAX_BVH_DEPTH];
-        BvhBacktrackArray[0] = 1;
-        int backTrackIndex = 0;
+        uint BoundBuffer[MAX_BOUND_BUFFER];
         
-        while (!hitAnything && backTrackIndex != -1)
+        float TVals[MAX_BOUND_BUFFER];
+        for (int j = 0; j < MAX_BOUND_BUFFER; j++)
+            TVals[j] = farLimit;
+        
+        BoundBuffer[0] = 1;
+        int front = 0, rear = 0;
+        float t;
+        bool hit, isLeaf;
+        uint bound, leaf;
+        
+        while (front != -1)
         {
-            uint currentBound = BvhBacktrackArray[backTrackIndex--];
+            // Dequeue from buffer
+            bound = BoundBuffer[front];
+            if (bound >= leafThresh)
+                break;
+            front = (front == rear) ? -1 : (front + 1) % MAX_BOUND_BUFFER;
+            rear = (front == -1) ? -1 : rear;
             
-            while (currentBound != 0 && currentBound < nBounds / 2)
+            // If left/right hit, add to buffer
+            bound *= 2;  
+            isLeaf = (bound >= leafThresh);
+            
+            hit = HitBound(Bounds[bound], ray, nearLimit, farLimit, t);
+            if (hit)
             {
-                uint leftBound = 2 * currentBound;
-                uint rightBound = 2 * currentBound + 1;
+                // Enqueue
+                front = (front == -1) ? 0 : front;
+                rear = (front == -1) ? 0 : (rear + 1) % MAX_BOUND_BUFFER;
+                BoundBuffer[rear] = bound;
                 
-                float leftT, rightT;
-                
-                bool leftHit = HitBound(Bounds[leftBound], ray, nearLimit, farLimit, leftT);
-                bool rightHit = HitBound(Bounds[rightBound], ray, nearLimit, farLimit, rightT);
-                
-                bool leftNear = leftT < rightT;
-                uint nearBound = leftNear ? leftBound : rightBound;
-                uint farBound = leftNear ? rightBound : leftBound;
-                bool nearHit = leftNear ? leftHit : rightHit;
-                bool farHit = leftNear ? rightHit : leftHit;
-                
-                currentBound = nearHit ? nearBound : (farHit ? farBound : 0);
-            
-                if (currentBound == nearBound && farHit && backTrackIndex < MAX_BVH_DEPTH - 1)
-                {
-                    BvhBacktrackArray[++backTrackIndex] = farBound;
-                }
+                if (isLeaf)
+                    TVals[bound - leafThresh] = t;
             }
-        
-            if (currentBound >= nBounds / 2)
-            {
-                float closestSoFar = farLimit;
             
-                uint startIndex = (currentBound > nBounds / 2) ? Bounds[currentBound - 1].endIndex : 0;
-                uint endIndex = Bounds[currentBound].endIndex;
-                for (uint i = startIndex; i < endIndex; i++)
+            hit = HitBound(Bounds[++bound], ray, nearLimit, farLimit, t);
+            if (hit)
+            {
+                // If buffer is full, dequeue
+                front = ((rear + 1) % MAX_BOUND_BUFFER == front) ? front + 1 : front;
+                
+                // Enqueue
+                front = (front == -1) ? 0 : front;
+                rear = (front == -1) ? 0 : (rear + 1) % MAX_BOUND_BUFFER;
+                BoundBuffer[rear] = bound;
+                
+                if (isLeaf)
+                    TVals[bound - leafThresh] = t;
+            }
+        }
+        
+        while (!hitAnything && front != -1)
+        {
+            int bufIndex = front, minT = farLimit, minIndex = -1;
+            while (1)
+            {
+                t = TVals[BoundBuffer[bufIndex] - leafThresh];
+                bool updateMin = (t < minT);
+                minT = updateMin ? t : minT;
+                minIndex = updateMin ? bufIndex : minIndex;
+            
+                if (bufIndex == rear)
+                    break;
+            
+                bufIndex = (bufIndex + 1) % MAX_BOUND_BUFFER;
+            }
+            
+            if (minIndex == -1)
+                break;
+            
+            bound = BoundBuffer[minIndex];
+            TVals[BoundBuffer[minIndex] - leafThresh] = farLimit;
+                
+            float closestSoFar = farLimit;
+    
+            uint startIndex = (bound > leafThresh) ? Bounds[bound - 1].endIndex : 0;
+            uint endIndex = Bounds[bound].endIndex;
+            for (uint i = startIndex; i < endIndex; i++)
+            {
+                if (HitTriangle(Triangles[i], ray, nearLimit, closestSoFar, rec))
                 {
-                    if (HitTriangle(Triangles[i], ray, nearLimit, closestSoFar, rec))
-                    {
-                        hitAnything = true;
-                        closestSoFar = rec.t;
-                    }
+                    hitAnything = true;
+                    closestSoFar = rec.t;
                 }
             }
         }
@@ -244,12 +288,10 @@ float3 RayColor(Ray ray, uint seed)
             seed = Hash(seed);
             ray.origin = rec.pt;
             ray.direction = rec.normal + RandomUnitVector(seed);      
-            attenuation *= float3(1.0f, 1.0f, 1.0f);
+            attenuation *= Colors[rec.colorIndex];
         }
         else
         {
-            if (depth == 0)
-                return float3(0.0f, 0.0f, 0.0f);
             return attenuation * lerp(float3(1.0f, 1.0f, 1.0f), float3(0.5f, 0.7f, 1.0f), 0.5f * (normalize(ray.direction).y + 1.0f));
         }
     }
