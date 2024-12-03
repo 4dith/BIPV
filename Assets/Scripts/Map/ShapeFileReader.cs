@@ -1,17 +1,9 @@
-//This code had been heavily influenced by ChatGPT. Thus, a more robust implementation of the code is being awaited
-
-using NetTopologySuite.IO.ShapeFile.Extended;
-using NetTopologySuite.Features;
-using NetTopologySuite.Geometries;
-using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
-using NetTopologySuite.IO;
+//This code ha been heavily influenced by ChatGPT. Thus, a more robust implementation of the code is being awaited
 
 public class ShapeFileReader : MonoBehaviour
 {
     [Tooltip("Path to shapefile (.shp)")]
-    public string ShapeFilePath;
+    public string ShapeFilePath = "\"C:\\Users\\dassu\\Downloads\\LOD1_Building_with_height_info\\LOD1_Building_with_height_info.shp\"";
 
     private List<Vector3[]> lines;          //Stores lines for visualisation
     private List<Vector3[]> polygons;       //Stores vertices of Polygons
@@ -25,10 +17,18 @@ public class ShapeFileReader : MonoBehaviour
         ReadShapefile();
 
         DrawData();
-    }  
+    }
     void ReadShapefile()
-     { 
-        using (ShapefileDataReader reader = new (ShapeFilePath, GeometryFactory.Default))
+    {
+        Debug.Log($"Reading Shapefile from path: {ShapeFilePath}");
+
+        if (!System.IO.File.Exists(ShapeFilePath))
+        {
+            Debug.LogError($"FIle not found: {ShapeFilePath}");
+        }
+
+
+        using (ShapefileDataReader reader = new(ShapeFilePath, GeometryFactory.Default))
         {
             while (reader.Read())
             {
@@ -41,11 +41,11 @@ public class ShapeFileReader : MonoBehaviour
                 }
                 else if (geometry is Polygon polygon)
                 {
-                    
+
                     polygons.Add(ConvertToUnityCoordinates(polygon.ExteriorRing.Coordinates));
-                    
+
                 }
-                else if(geometry is LineString lineString)
+                else if (geometry is LineString lineString)
                 {
                     lines.Add(ConvertToUnityCoordinates(lineString.Coordinates));
                 }
@@ -53,7 +53,7 @@ public class ShapeFileReader : MonoBehaviour
         }
     }
 
-     Vector3 ToUnityCoordinates(Point point)
+    Vector3 ToUnityCoordinates(Point point)
     {
         return new Vector3((float)point.X, 0, (float)point.Y);
     }
@@ -63,7 +63,7 @@ public class ShapeFileReader : MonoBehaviour
         Vector3[] unityCoordinates = new Vector3[coordinates.Length];
         for (int i = 0; i < coordinates.Length; i++)
         {
-            unityCoordinates[i] = new Vector3((float)coordinates[i].X, 0,(float)coordinates[i].Y);
+            unityCoordinates[i] = new Vector3((float)coordinates[i].X, 0, (float)coordinates[i].Y);
 
         }
         return unityCoordinates;
@@ -76,15 +76,15 @@ public class ShapeFileReader : MonoBehaviour
             Debug.DrawRay(point, Vector3.up * 10, Color.green, 100f);
         }
         foreach (var polygon in polygons)
-        {     
-            for (int i = 0;i < polygon.Length;i++) 
-              {
-                Debug.DrawLine(polygon[i], polygon[i + 1], Color.blue, 100f);
-              }
-        }
-        foreach (var line  in lines)
         {
-            for (int i = 0; i< line.Length;i++)
+            for (int i = 0; i < polygon.Length; i++)
+            {
+                Debug.DrawLine(polygon[i], polygon[i + 1], Color.blue, 100f);
+            }
+        }
+        foreach (var line in lines)
+        {
+            for (int i = 0; i < line.Length; i++)
             {
                 Debug.DrawLine(line[i], line[i + 1], Color.red, 100f);
             }
